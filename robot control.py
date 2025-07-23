@@ -19,7 +19,7 @@ class GamepadThread(QThread):
     buttons_signal = pyqtSignal(list)
     debug_signal = pyqtSignal(str)  # 新增
 
-    def __init__(self, robot_ip=None):
+    def __init__(self, robot_ip=None, duration=100):
         super().__init__()
         self.running = True
         self.THRESHOLD = 0.5
@@ -29,22 +29,26 @@ class GamepadThread(QThread):
         self.robot_ip = robot_ip or ROBOT_IP
         self.robot_port = ROBOT_PORT
         self.control_url = f"http://{self.robot_ip}:{self.robot_port}/api/core/motion/v1/actions"
+        self.duration = duration  # 新增：可调 duration
+
+    def set_duration(self, duration):
+        self.duration = duration
 
     def update_ip(self, new_ip):
         self.robot_ip = new_ip
         self.control_url = f"http://{self.robot_ip}:{self.robot_port}/api/core/motion/v1/actions"
 
-    def send_motion_command(self, direction):
+    def send_motion_command(self, direction, duration=None):
         data = {
             "action_name": "slamtec.agent.actions.MoveByAction",
             "options": {
                 "direction": direction,
-                "duration": 500
+                "duration": duration if duration is not None else self.duration
             }
         }
         try:
             response = requests.post(self.control_url, json=data, timeout=1)
-            self.log_signal.emit(f"Sent direction {direction}, status: {response.status_code}")
+            self.log_signal.emit(f"Sent direction {direction}, duration: {data['options']['duration']}, status: {response.status_code}")
         except Exception as e:
             self.log_signal.emit(f"Error sending command: {e}")
 
@@ -122,13 +126,13 @@ class GamepadThread(QThread):
 
             # 按钮优先控制
             if buttons[0]:
-                self.send_motion_command(0)
+                self.send_motion_command(0, self.duration)
             elif buttons[1]:
-                self.send_motion_command(1)
+                self.send_motion_command(1, self.duration)
             elif buttons[2]:
-                self.send_motion_command(2)
+                self.send_motion_command(2, self.duration)
             elif buttons[3]:
-                self.send_motion_command(3)
+                self.send_motion_command(3, self.duration)
             # 新增：按钮6创建POI
             elif len(buttons) > 6 and buttons[6]:
                 self.send_create_poi()
@@ -143,14 +147,15 @@ class GamepadThread(QThread):
                 time.sleep(0.3)  # 防止多次触发
             else:
                 if current_time - self.last_command_time > self.command_interval:
+                    axis_duration = 500  # 摇杆动作时长，固定为500ms
                     if axis_y < -self.THRESHOLD:
-                        self.send_motion_command(0)
+                        self.send_motion_command(0, axis_duration)
                     elif axis_y > self.THRESHOLD:
-                        self.send_motion_command(1)
+                        self.send_motion_command(1, axis_duration)
                     elif axis_x < -self.THRESHOLD:
-                        self.send_motion_command(3)  # 修正：左摇杆左为右转
+                        self.send_motion_command(3, axis_duration)  # 修正：左摇杆左为右转
                     elif axis_x > self.THRESHOLD:
-                        self.send_motion_command(2)  # 修正：左摇杆右为左转
+                        self.send_motion_command(2, axis_duration)  # 修正：左摇杆右为左转
                     self.last_command_time = current_time
 
             time.sleep(0.03)
@@ -163,7 +168,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("游戏手柄机器人控制")
-        self.resize(400, 650)
+        self.resize(400, 700)
 
         layout = QVBoxLayout()
 
@@ -178,6 +183,18 @@ class MainWindow(QWidget):
         ip_layout.addWidget(self.ip_input)
         ip_layout.addWidget(self.ip_apply_btn)
         layout.addLayout(ip_layout)
+
+        # 新增：duration 配置区
+        duration_layout = QHBoxLayout()
+        self.duration_label = QLabel("动作时长(ms):")
+        self.duration_input = QTextEdit()
+        self.duration_input.setFixedHeight(28)
+        self.duration_input.setText("100")
+        self.duration_apply_btn = QPushButton("应用时长")
+        duration_layout.addWidget(self.duration_label)
+        duration_layout.addWidget(self.duration_input)
+        duration_layout.addWidget(self.duration_apply_btn)
+        layout.addLayout(duration_layout)
 
         self.status_label = QLabel("手柄状态：未连接")
         layout.addWidget(self.status_label)
@@ -217,7 +234,7 @@ class MainWindow(QWidget):
 
         self.setLayout(layout)
 
-        self.gamepad_thread = GamepadThread(robot_ip=self.ip_input.toPlainText())
+        self.gamepad_thread = GamepadThread(robot_ip=self.ip_input.toPlainText(), duration=int(self.duration_input.toPlainText()))
         self.gamepad_thread.log_signal.connect(self.append_log)
         self.gamepad_thread.status_signal.connect(self.update_status)
         self.gamepad_thread.axis_signal.connect(self.update_axis)
@@ -231,6 +248,8 @@ class MainWindow(QWidget):
         self.btn_right.clicked.connect(lambda: self.manual_send(3))
         # 新增：IP应用按钮事件
         self.ip_apply_btn.clicked.connect(self.apply_ip)
+        # 新增：duration应用按钮事件
+        self.duration_apply_btn.clicked.connect(self.apply_duration)
 
     def append_log(self, text):
         self.log_text.append(text)
@@ -259,6 +278,14 @@ class MainWindow(QWidget):
         if new_ip:
             self.gamepad_thread.update_ip(new_ip)
             self.append_log(f"已切换机器人IP为: {new_ip}")
+
+    def apply_duration(self):
+        try:
+            new_duration = int(self.duration_input.toPlainText().strip())
+            self.gamepad_thread.set_duration(new_duration)
+            self.append_log(f"已切换动作时长为: {new_duration} ms")
+        except Exception as e:
+            self.append_log(f"动作时长设置失败: {e}")
 
     def closeEvent(self, event):
         self.gamepad_thread.stop()
