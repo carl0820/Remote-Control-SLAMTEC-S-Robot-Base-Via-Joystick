@@ -54,7 +54,7 @@ class GamepadThread(QThread):
 
     # 新增：回桩API
     def send_gohome_command(self):
-        url = f"http://{ROBOT_IP}:{ROBOT_PORT}/api/multi-floor/motion/v1/gohomeaction"
+        url = f"http://{self.robot_ip}:{self.robot_port}/api/multi-floor/motion/v1/gohomeaction"
         try:
             response = requests.post(url, json={}, timeout=2)
             self.log_signal.emit(f"回桩指令已发送，状态: {response.status_code}, 响应: {response.text}")
@@ -63,7 +63,7 @@ class GamepadThread(QThread):
 
     # 新增：创建POI API
     def send_create_poi(self):
-        url = f"http://{ROBOT_IP}:{ROBOT_PORT}/api/core/artifact/v1/pois"
+        url = f"http://{self.robot_ip}:{self.robot_port}/api/core/artifact/v1/pois"
         max_retry = 5
         retry = 0
         while retry < max_retry:
